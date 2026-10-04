@@ -111,6 +111,11 @@ pub const Engine = struct {
         if (processed.contains(path)) return;
         try processed.put(path, {});
 
+        // Password hints travel with the download surprisingly often.  Load
+        // them before probing this entry so README/NFO/TXT files beside a
+        // volume are part of the same unified password-book pipeline.
+        self.book.gatherContext(path) catch {};
+
         // Module 2: Sniff real carrier — collect all plausible candidates
         const cands = sniffer.sniffFileAll(self.alloc, path) catch return;
         defer self.alloc.free(cands);
@@ -209,6 +214,33 @@ pub const Engine = struct {
             };
 
             if (pr == null) {
+                // If the archive is not covered by the local book, give the
+                // host one interactive opportunity.  The callback is optional
+                // and remains disabled for non-interactive callers.
+                var interactive_probe: ?ffi.ProbeResult = null;
+                if (self.opts.interactive) {
+                    if (self.evcb) |cb| {
+                        if (cb.need_password) |need| {
+                            var pass_buf: [512]u8 = undefined;
+                            if (need(path, &pass_buf, cb.user)) |pass| {
+                                if (self.lib.probe(self.alloc, actual_path, clsid.?, vol_deps, pass)) |found_probe| {
+                                    self.book.learn(pass) catch {};
+                                    current_password = self.book.candidates.items[self.book.candidates.items.len - 1];
+                                    self.report.passwords_used += 1;
+                                    interactive_probe = found_probe;
+                                } else |_| {}
+                            }
+                        }
+                    }
+                }
+                if (interactive_probe) |found| {
+                    probe_result = found;
+                    chosen_fmt = cand.fmt;
+                    chosen_clsid = clsid;
+                    chosen_actual = actual_path;
+                    chosen_free = free_actual;
+                    break;
+                }
                 // This candidate is not a valid archive — try the next sniff hit.
                 if (free_actual) ioctx.cwd().deleteFile(ioctx.io(), actual_path) catch {};
                 continue;

@@ -23,16 +23,46 @@ fn gpa() std.mem.Allocator {
     return gpa_storage.?.allocator();
 }
 
-const CtxEntry = struct {
-    ctx: *engine_mod.Engine,
+const CNeedPass = *const fn (
+    archive_path: [*:0]const u8,
+    out_password: [*]u8,
+    out_cap: usize,
+    user: ?*anyopaque,
+) callconv(.c) c_int;
+const CEvent = *const fn (
+    event: c_int,
+    path: [*:0]const u8,
+    depth: u32,
+    fmt: c_int,
+    aux: u64,
+    user: ?*anyopaque,
+) callconv(.c) void;
+
+const COptions = extern struct {
+    struct_size: u32,
+    max_depth: u32,
+    max_ratio: u32,
+    max_total_bytes: u64,
+    flatten: u32,
+    overwrite: u32,
+    interactive: u32,
+    password_db: ?[*:0]const u8,
+    temp_dir: ?[*:0]const u8,
 };
 
-var ctx_map = std.StringHashMap(*engine_mod.Engine).init(undefined);
+const Ctx = struct {
+    engine: engine_mod.Engine,
+    need_pass: ?CNeedPass = null,
+    event: ?CEvent = null,
+    user: ?*anyopaque = null,
+};
+
+var ctx_map = std.AutoHashMap(usize, *Ctx).init(undefined);
 var ctx_map_init = false;
 
 fn ensureCtxMap() void {
     if (!ctx_map_init) {
-        ctx_map = std.StringHashMap(*engine_mod.Engine).init(gpa());
+        ctx_map = std.AutoHashMap(usize, *Ctx).init(gpa());
         ctx_map_init = true;
     }
 }
@@ -73,23 +103,88 @@ export fn hrd_status_string(st: c_int) callconv(.c) [*:0]const u8 {
 }
 
 export fn hrd_ctx_create(opts_ptr: ?*const anyopaque) callconv(.c) ?*anyopaque {
-    _ = opts_ptr;
     const alloc = gpa();
-    const eng = alloc.create(engine_mod.Engine) catch return null;
-    eng.* = engine_mod.Engine.init(alloc, .{}) catch return null;
+    var opts: types.Options = .{};
+    if (opts_ptr) |raw| {
+        const c: *const COptions = @ptrCast(@alignCast(raw));
+        opts.max_depth = if (c.max_depth == 0) opts.max_depth else c.max_depth;
+        opts.max_ratio = c.max_ratio;
+        opts.max_total_bytes = c.max_total_bytes;
+        opts.flatten = c.flatten != 0;
+        opts.overwrite = c.overwrite != 0;
+        opts.interactive = c.interactive != 0;
+        if (c.password_db) |p| opts.password_db = std.mem.span(p);
+        if (c.temp_dir) |p| opts.temp_dir = std.mem.span(p);
+    }
+    const ctx = alloc.create(Ctx) catch return null;
+    ctx.engine = engine_mod.Engine.init(alloc, opts) catch {
+        alloc.destroy(ctx);
+        return null;
+    };
     ensureCtxMap();
-    var buf: [20]u8 = undefined;
-    const id = std.fmt.bufPrint(&buf, "{x}", .{@intFromPtr(eng)}) catch return null;
-    ctx_map.put(alloc.dupe(u8, id) catch return null, eng) catch return null;
-    return @ptrCast(eng);
+    ctx_map.put(@intFromPtr(ctx), ctx) catch {
+        ctx.engine.deinit();
+        alloc.destroy(ctx);
+        return null;
+    };
+    return @ptrCast(ctx);
 }
 
 export fn hrd_ctx_destroy(ctx: ?*anyopaque) callconv(.c) void {
     if (ctx) |c| {
-        const eng: *engine_mod.Engine = @ptrCast(@alignCast(c));
-        eng.deinit();
-        gpa().destroy(eng);
+        const context: *Ctx = @ptrCast(@alignCast(c));
+        if (ctx_map_init) _ = ctx_map.remove(@intFromPtr(context));
+        context.engine.deinit();
+        gpa().destroy(context);
     }
+}
+
+fn passwordAdapter(path: []const u8, buf: []u8, user: ?*anyopaque) ?[]const u8 {
+    const ctx: *Ctx = @ptrCast(@alignCast(user.?));
+    const path_z = std.heap.c_allocator.dupeZ(u8, path) catch return null;
+    defer std.heap.c_allocator.free(path_z);
+    const cb = ctx.need_pass orelse return null;
+    const n = cb(path_z.ptr, buf.ptr, buf.len, ctx.user);
+    if (n == 0) return null;
+    const len = std.mem.indexOfScalar(u8, buf, 0) orelse @min(@as(usize, @intCast(n)), buf.len);
+    return buf[0..len];
+}
+
+fn eventAdapter(info: types.EventInfo, user: ?*anyopaque) void {
+    const ctx: *Ctx = @ptrCast(@alignCast(user.?));
+    const cb = ctx.event orelse return;
+    const path_z = std.heap.c_allocator.dupeZ(u8, info.path) catch return;
+    defer std.heap.c_allocator.free(path_z);
+    cb(@intFromEnum(info.event), path_z.ptr, info.depth, @intFromEnum(info.fmt), info.aux, ctx.user);
+}
+
+fn applyCallbacks(ctx: *Ctx) void {
+    ctx.engine.setCallbacks(.{
+        .need_password = if (ctx.need_pass != null) passwordAdapter else null,
+        .event = if (ctx.event != null) eventAdapter else null,
+        .user = @ptrCast(ctx),
+    });
+}
+
+export fn hrd_ctx_set_need_password_cb(ctx_ptr: ?*anyopaque, cb: ?CNeedPass, user: ?*anyopaque) callconv(.c) void {
+    const ctx = if (ctx_ptr) |p| @as(*Ctx, @ptrCast(@alignCast(p))) else return;
+    ctx.need_pass = cb;
+    ctx.user = user;
+    applyCallbacks(ctx);
+}
+
+export fn hrd_ctx_set_event_cb(ctx_ptr: ?*anyopaque, cb: ?CEvent, user: ?*anyopaque) callconv(.c) void {
+    const ctx = if (ctx_ptr) |p| @as(*Ctx, @ptrCast(@alignCast(p))) else return;
+    ctx.event = cb;
+    ctx.user = user;
+    applyCallbacks(ctx);
+}
+
+export fn hrd_ctx_add_password(ctx_ptr: ?*anyopaque, password: ?[*:0]const u8) callconv(.c) c_int {
+    const ctx = if (ctx_ptr) |p| @as(*Ctx, @ptrCast(@alignCast(p))) else return HRD_STATUS_ERR_INVALID_ARG;
+    const pw = password orelse return HRD_STATUS_ERR_INVALID_ARG;
+    ctx.engine.book.learn(std.mem.span(pw)) catch |e| return toStatus(e);
+    return HRD_STATUS_OK;
 }
 
 export fn hrd_process(
@@ -100,7 +195,7 @@ export fn hrd_process(
     out_report: ?*?[*:0]const u8,
 ) callconv(.c) c_int {
     if (ctx == null or inputs == null or out_dir == null) return HRD_STATUS_ERR_INVALID_ARG;
-    const eng: *engine_mod.Engine = @ptrCast(@alignCast(ctx.?));
+    const context: *Ctx = @ptrCast(@alignCast(ctx.?));
     const alloc = gpa();
 
     const inputs_raw = inputs.?[0..input_count];
@@ -111,7 +206,7 @@ export fn hrd_process(
     }
     const od = std.mem.span(out_dir.?);
 
-    const report = eng.process(input_list.items, od) catch |e| return toStatus(e);
+    const report = context.engine.process(input_list.items, od) catch |e| return toStatus(e);
 
     if (out_report) |or_| {
         const r = std.fmt.allocPrint(

@@ -33,14 +33,15 @@ const usage =
     \\
 ;
 
-pub fn main() !void {
+pub fn main(init: std.process.Init.Minimal) !void {
     const a = std.heap.c_allocator;
 
-    // Parse CLI args (Zig 0.16 Windows: Args.Iterator.initAllocator)
-    const args_raw = std.process.Args{ .vector = std.os.windows.peb().ProcessParameters.CommandLine.slice() };
-        var it = try std.process.Args.Iterator.initAllocator(args_raw, a);
-        _ = it.next(); // skip argv[0] (program name)
-        defer it.deinit();
+    // Use Zig's portable argument API.  The old implementation reached into
+    // the Windows PEB directly, which made the extractor impossible to build
+    // for Android/iOS and also made the CLI unnecessarily hard to test.
+    var it = try std.process.Args.Iterator.initAllocator(init.args, a);
+    defer it.deinit();
+    _ = it.next();
 
     var inputs = std.ArrayList([]const u8).empty;
     defer inputs.deinit(a);
@@ -59,19 +60,19 @@ pub fn main() !void {
             std.debug.print("{s}", .{usage});
             return;
         } else if (std.mem.eql(u8, arg, "-o") or std.mem.eql(u8, arg, "--output")) {
-            if (it.next()) |v| output_dir = v;
+            if (it.next()) |value| output_dir = value;
         } else if (std.mem.eql(u8, arg, "-d") or std.mem.eql(u8, arg, "--depth")) {
-            if (it.next()) |v| max_depth = std.fmt.parseInt(u32, v, 10) catch 8;
+            if (it.next()) |value| max_depth = std.fmt.parseInt(u32, value, 10) catch 8;
         } else if (std.mem.eql(u8, arg, "-r") or std.mem.eql(u8, arg, "--ratio")) {
-            if (it.next()) |v| max_ratio = std.fmt.parseInt(u32, v, 10) catch 100;
+            if (it.next()) |value| max_ratio = std.fmt.parseInt(u32, value, 10) catch 100;
         } else if (std.mem.eql(u8, arg, "-b") or std.mem.eql(u8, arg, "--bytes")) {
-            if (it.next()) |v| max_bytes = std.fmt.parseInt(u64, v, 10) catch (32 << 30);
+            if (it.next()) |value| max_bytes = std.fmt.parseInt(u64, value, 10) catch (32 << 30);
         } else if (std.mem.eql(u8, arg, "--no-interactive")) {
             interactive = false;
         } else if (std.mem.eql(u8, arg, "--password-db")) {
-            if (it.next()) |v| password_db = v;
+            if (it.next()) |value| password_db = value;
         } else if (std.mem.eql(u8, arg, "--temp-dir")) {
-            if (it.next()) |v| temp_dir = v;
+            if (it.next()) |value| temp_dir = value;
         } else if (std.mem.eql(u8, arg, "--flatten")) {
             flatten = true;
         } else if (std.mem.eql(u8, arg, "--overwrite")) {

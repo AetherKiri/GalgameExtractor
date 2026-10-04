@@ -30,9 +30,12 @@ pub fn build(b: *std.Build) void {
     const hdr = b.addInstallFileWithDir(b.path("include/hrd.h"), .header, "hrd.h");
     b.getInstallStep().dependOn(&hdr.step);
 
-    // Copy 7z.dll next to binaries.
-    const dll_copy = b.addInstallFileWithDir(b.path("third_party/7zip/7z.dll"), .bin, "7z.dll");
-    b.getInstallStep().dependOn(&dll_copy.step);
+    // Copy 7z.dll next to binaries.  The backend is intentionally kept as a
+    // runtime dependency so the same HRD ABI can be loaded by the Godot host.
+    if (target.result.os.tag == .windows) {
+        const dll_copy = b.addInstallFileWithDir(b.path("third_party/7zip/7z.dll"), .bin, "7z.dll");
+        b.getInstallStep().dependOn(&dll_copy.step);
+    }
 
     const tests = b.addTest(.{
         .root_module = b.createModule(.{
