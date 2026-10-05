@@ -23,6 +23,11 @@ file(GLOB_RECURSE AETHER_7ZIP_SDK_SOURCES CONFIGURE_DEPENDS
 list(FILTER AETHER_7ZIP_SDK_SOURCES EXCLUDE REGEX ".*/DllExports(2)?(Compress)?\\.cpp$")
 list(FILTER AETHER_7ZIP_SDK_SOURCES EXCLUDE REGEX ".*/CodecExports\\.cpp$")
 list(FILTER AETHER_7ZIP_SDK_SOURCES EXCLUDE REGEX ".*/StdAfx\\.cpp$")
+# C/Util contains standalone command-line, installer, uninstaller, and SFX
+# programs. Several of those are Windows-only and are not part of the 7-Zip
+# extraction library; including them in the recursive C glob breaks Android
+# and Apple builds on headers such as ShlObj.h.
+list(FILTER AETHER_7ZIP_SDK_SOURCES EXCLUDE REGEX ".*/C/Util/.*\\.c$")
 
 set(AETHER_7ZIP_SDK_WINDOWS_SOURCES)
 foreach(_source IN ITEMS
