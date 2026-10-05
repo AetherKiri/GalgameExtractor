@@ -1,0 +1,3 @@
+[submodule "third_party/7zip-sdk"]
+	path = third_party/7zip-sdk
+	url = https://github.com/ip7z/7zip.git
