@@ -33,7 +33,7 @@ set(AETHER_7ZIP_SDK_WINDOWS_SOURCES)
 foreach(_source IN ITEMS
     ErrorMsg.cpp FileDir.cpp FileFind.cpp FileIO.cpp FileLink.cpp FileName.cpp
     FileSystem.cpp PropVariant.cpp PropVariantConv.cpp PropVariantUtils.cpp
-    System.cpp TimeUtils.cpp)
+    Synchronization.cpp System.cpp TimeUtils.cpp)
     list(APPEND AETHER_7ZIP_SDK_WINDOWS_SOURCES
         "${AETHER_7ZIP_SDK_CPP_ROOT}/Windows/${_source}")
 endforeach()
