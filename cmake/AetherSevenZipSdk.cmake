@@ -40,7 +40,6 @@ target_sources(aether_7zip_sdk PRIVATE
     "${CMAKE_CURRENT_LIST_DIR}/AetherSevenZipGuid.cpp")
 target_compile_features(aether_7zip_sdk PRIVATE cxx_std_17)
 target_compile_definitions(aether_7zip_sdk PRIVATE
-    Z7_NO_UNALIGNED_ACCESS
     _FILE_OFFSET_BITS=64
 )
 target_include_directories(aether_7zip_sdk PUBLIC
