@@ -4,6 +4,10 @@
  * hrd — Heuristic Recursive Decompressor
  * Stable C ABI (v1). Cross-platform: Windows / Linux / macOS.
  *
+ * Define HRD_STATIC before including this header when the implementation is
+ * statically linked into the host (cpp/ host engine built by CMake). Without
+ * it, Windows hosts expect a DLL import.
+ *
  * Threading: one hrd_ctx_t* may be used from one thread at a time.
  * Multiple contexts may be used concurrently. All strings are UTF-8.
  */
@@ -11,7 +15,10 @@
 extern "C" {
 #endif
 
-#if defined(_WIN32) || defined(__CYGWIN__)
+#if defined(HRD_STATIC)
+#  define HRD_API
+#  define HRD_CALL
+#elif defined(_WIN32) || defined(__CYGWIN__)
 #  ifdef HRD_BUILDING_DLL
 #    define HRD_API __declspec(dllexport)
 #  else
