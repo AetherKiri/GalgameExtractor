@@ -7,6 +7,7 @@
 #include "sevenzip_backend.h"
 
 #include <functional>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -45,7 +46,7 @@ public:
     // Process one file (recursion entry). Returns the first error status
     // for this entry, or 0.
     int ProcessEntry(const std::string &path, const std::string &out_dir,
-                     uint32_t depth, std::vector<std::string> &processed,
+                     uint32_t depth, std::set<std::string> &processed,
                      const std::vector<std::string> &vol_deps);
 
     // Concatenate all volumes of a split archive into a single temp file.

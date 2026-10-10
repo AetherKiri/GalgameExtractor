@@ -167,7 +167,7 @@ int Engine::Process(const std::vector<std::string> &inputs,
         // Only process if not already handled as part of another group.
         if (processed_paths.count(group.entry) != 0) continue;
         const int status = ProcessEntry(group.entry, out_dir, 0,
-                                        processed, group.deps);
+                                        processed_paths, group.deps);
         if (status != 0 && first_error == 0) first_error = status;
         for (const std::string &dep : group.deps) {
             processed_paths.insert(dep);
@@ -187,18 +187,17 @@ int Engine::Process(const std::vector<std::string> &inputs,
 
 int Engine::ProcessEntry(const std::string &path, const std::string &out_dir,
                          uint32_t depth,
-                         std::vector<std::string> &processed,
+                         std::set<std::string> &processed,
                          const std::vector<std::string> &vol_deps) {
     if (depth >= options_.max_depth) {
         Emit(Event::circuit, path.c_str(), depth, Format::none,
              options_.max_depth);
         return 0;
     }
-    if (processed.end() != std::find(processed.begin(), processed.end(),
-                                     path)) {
+    if (processed.count(path) != 0) {
         return 0;
     }
-    processed.push_back(path);
+    processed.insert(path);
 
     // Password hints travel with the download surprisingly often. Load them
     // before probing this entry so README/NFO/TXT files beside a volume are
@@ -213,7 +212,7 @@ int Engine::ProcessEntry(const std::string &path, const std::string &out_dir,
         Emit(Event::kept, path.c_str(), depth, Format::none, 0);
         if (!DeliverFile(path, out_dir)) {
             report_.errors += 1;
-            return HRD_STATUS_ERR_IO;
+            return HRD_ERR_IO;
         }
         return 0;
     }
@@ -350,14 +349,14 @@ int Engine::ProcessEntry(const std::string &path, const std::string &out_dir,
         Emit(Event::kept, path.c_str(), depth, Format::none, 0);
         if (!DeliverFile(path, out_dir)) {
             report_.errors += 1;
-            return HRD_STATUS_ERR_ARCHIVE;
+            return HRD_ERR_ARCHIVE;
         }
         report_.errors += 1;
         if (password_blocked) {
             // Encrypted headers with no working password: tell the host so
             // it can prompt and retry instead of treating the carrier as a
             // plain file.
-            return HRD_STATUS_ERR_ENCRYPTED;
+            return HRD_ERR_ENCRYPTED;
         }
         return 0;
     }
@@ -375,9 +374,9 @@ int Engine::ProcessEntry(const std::string &path, const std::string &out_dir,
     std::error_code ec;
     fs::create_directories(fs::u8path(depth_dir), ec);
 
-    // Extract.
-    const uint64_t bomb_limit =
-        options_.max_ratio > 0 ? options_.max_total_bytes : 0;
+    // Extract. The byte budget is an independent circuit breaker: 0 disables
+    // it (the ratio limit is enforced by the same budget at a higher level).
+    const uint64_t bomb_limit = options_.max_total_bytes;
 
     int status = 0;
     bool verified_extract = false;
@@ -427,7 +426,7 @@ int Engine::ProcessEntry(const std::string &path, const std::string &out_dir,
             CloseArchive(opened);
             report_.errors += 1;
             RemoveTree(depth_dir);
-            return HRD_STATUS_ERR_ENCRYPTED;
+            return HRD_ERR_ENCRYPTED;
         }
         if (verified_extract) {
             status = 0;
@@ -442,7 +441,7 @@ int Engine::ProcessEntry(const std::string &path, const std::string &out_dir,
         if (opened == nullptr) {
             report_.errors += 1;
             RemoveTree(depth_dir);
-            return HRD_STATUS_ERR_ARCHIVE;
+            return HRD_ERR_ARCHIVE;
         }
         const ExtractOutcome outcome =
             ExtractAll(opened, depth_dir, bomb_limit, current_password);
@@ -450,13 +449,13 @@ int Engine::ProcessEntry(const std::string &path, const std::string &out_dir,
             report_.errors += 1;
             CloseArchive(opened);
             RemoveTree(depth_dir);
-            return HRD_STATUS_ERR_BOMB;
+            return HRD_ERR_BOMB;
         }
         if (outcome.wrong_password) {
             report_.errors += 1;
             CloseArchive(opened);
             RemoveTree(depth_dir);
-            return HRD_STATUS_ERR_PASSWORD;
+            return HRD_ERR_PASSWORD;
         }
         if (outcome.data_error) {
             report_.errors += 1;
@@ -488,7 +487,7 @@ int Engine::ProcessEntry(const std::string &path, const std::string &out_dir,
     // Module 5: cleanup temp stripped files & deliver final non-archive
     // files.
     if (!DeliverTree(depth_dir, out_dir)) {
-        if (status == 0) status = HRD_STATUS_ERR_IO;
+        if (status == 0) status = HRD_ERR_IO;
     }
     RemoveTree(depth_dir);
 

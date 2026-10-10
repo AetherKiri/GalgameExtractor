@@ -9,11 +9,19 @@
 
 #include "hrd_internal.h"
 
+#include <array>
 #include <cstdint>
 #include <string>
 #include <vector>
 
 namespace hrd {
+
+// Raw 16-byte GUID of a 7-Zip handler CLSID (kClassID property). Stored as a
+// byte array so this header does not need the 7-Zip SDK headers; the backend
+// casts it to GUID where the SDK expects one.
+struct BackendGuid {
+    std::array<uint8_t, 16> value{};
+};
 
 struct ProbeEntry {
     uint32_t index = 0;
@@ -37,7 +45,6 @@ struct ExtractOutcome {
 };
 
 struct ArchiveHandle;
-struct BackendGuid;
 
 // Find a handler CLSID by extension. When sig_want is non-empty, the
 // handler's Name property must match it (used to disambiguate the Rar (v4)

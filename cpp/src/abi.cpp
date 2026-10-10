@@ -61,7 +61,7 @@ HRD_API uint32_t HRD_CALL hrd_abi_version(void) {
     return (1u << 16) | 0u;  // v1.0
 }
 
-HRD_API const char *HRD_CALL hrd_status_string(int st) {
+HRD_API const char *HRD_CALL hrd_status_string(hrd_status_t st) {
     switch (st) {
         case HRD_OK: return "ok";
         case HRD_ERR_INVALID_ARG: return "invalid argument";
@@ -130,8 +130,8 @@ HRD_API void HRD_CALL hrd_ctx_set_event_cb(hrd_ctx_t *ctx, hrd_event_cb cb,
     ApplyCallbacks(self);
 }
 
-HRD_API int HRD_CALL hrd_ctx_add_password(hrd_ctx_t *ctx,
-                                          const char *password) {
+HRD_API hrd_status_t HRD_CALL hrd_ctx_add_password(hrd_ctx_t *ctx,
+                                                    const char *password) {
     if (ctx == nullptr || password == nullptr) return HRD_ERR_INVALID_ARG;
     auto *self = reinterpret_cast<HrdCtx *>(ctx);
     if (self->engine == nullptr) return HRD_ERR_INTERNAL;
@@ -139,9 +139,11 @@ HRD_API int HRD_CALL hrd_ctx_add_password(hrd_ctx_t *ctx,
     return HRD_OK;
 }
 
-HRD_API int HRD_CALL hrd_process(hrd_ctx_t *ctx, const char *const *inputs,
-                                 size_t input_count, const char *out_dir,
-                                 char **out_report) {
+HRD_API hrd_status_t HRD_CALL hrd_process(hrd_ctx_t *ctx,
+                                          const char *const *inputs,
+                                          size_t input_count,
+                                          const char *out_dir,
+                                          char **out_report) {
     if (ctx == nullptr || inputs == nullptr || out_dir == nullptr) {
         return HRD_ERR_INVALID_ARG;
     }
@@ -153,7 +155,8 @@ HRD_API int HRD_CALL hrd_process(hrd_ctx_t *ctx, const char *const *inputs,
         if (inputs[i] == nullptr) return HRD_ERR_INVALID_ARG;
         input_list.emplace_back(inputs[i]);
     }
-    const int status = self->engine->Process(input_list, out_dir);
+    const hrd_status_t status =
+        static_cast<hrd_status_t>(self->engine->Process(input_list, out_dir));
     if (out_report != nullptr) {
         *out_report = nullptr;
         const Report &report = self->engine->report();
@@ -180,5 +183,4 @@ HRD_API int HRD_CALL hrd_process(hrd_ctx_t *ctx, const char *const *inputs,
 }
 
 HRD_API void HRD_CALL hrd_free(void *p) { std::free(p); }
-
 }  // extern "C"

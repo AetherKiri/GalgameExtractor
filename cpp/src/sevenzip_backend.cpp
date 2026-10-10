@@ -108,50 +108,54 @@ public:
         }
     }
 
-    ~FileInStream() {
-        if (file_ != nullptr) std::fclose(file_);
-    }
+    ~FileInStream();
 
     bool ok() const { return file_ != nullptr; }
 
 private:
     std::FILE *file_ = nullptr;
     uint64_t size_ = 0;
-
-    Z7_COM7F_IMF(Read(void *data, UInt32 size, UInt32 *processedSize)) {
-        if (processedSize != nullptr) *processedSize = 0;
-        if (file_ == nullptr || size == 0) return S_OK;
-        const size_t n = std::fread(data, 1, size, file_);
-        if (processedSize != nullptr) *processedSize = static_cast<UInt32>(n);
-        return S_OK;
-    }
-
-    Z7_COM7F_IMF(Seek(Int64 offset, UInt32 seekOrigin, UInt64 *newPosition)) {
-        if (file_ == nullptr) return E_FAIL;
-        int origin = SEEK_SET;
-        switch (seekOrigin) {
-            case 0: origin = SEEK_SET; break;  // STREAM_SEEK_SET
-            case 1: origin = SEEK_CUR; break;  // STREAM_SEEK_CUR
-            case 2: origin = SEEK_END; break;  // STREAM_SEEK_END
-            default: return E_INVALIDARG;
-        }
-#ifdef _WIN32
-        if (_fseeki64(file_, offset, origin) != 0) return E_FAIL;
-#else
-        if (fseeko(file_, static_cast<off_t>(offset), origin) != 0) {
-            return E_FAIL;
-        }
-#endif
-        if (newPosition != nullptr) {
-#ifdef _WIN32
-            *newPosition = static_cast<UInt64>(_ftelli64(file_));
-#else
-            *newPosition = static_cast<UInt64>(ftello(file_));
-#endif
-        }
-        return S_OK;
-    }
 };
+
+Z7_COM7F_IMF(FileInStream::Read(void *data, UInt32 size,
+                                UInt32 *processedSize)) {
+    if (processedSize != nullptr) *processedSize = 0;
+    if (file_ == nullptr || size == 0) return S_OK;
+    const size_t n = std::fread(data, 1, size, file_);
+    if (processedSize != nullptr) *processedSize = static_cast<UInt32>(n);
+    return S_OK;
+}
+
+Z7_COM7F_IMF(FileInStream::Seek(Int64 offset, UInt32 seekOrigin,
+                                UInt64 *newPosition)) {
+    if (file_ == nullptr) return E_FAIL;
+    int origin = SEEK_SET;
+    switch (seekOrigin) {
+        case 0: origin = SEEK_SET; break;  // STREAM_SEEK_SET
+        case 1: origin = SEEK_CUR; break;  // STREAM_SEEK_CUR
+        case 2: origin = SEEK_END; break;  // STREAM_SEEK_END
+        default: return E_INVALIDARG;
+    }
+#ifdef _WIN32
+    if (_fseeki64(file_, offset, origin) != 0) return E_FAIL;
+#else
+    if (fseeko(file_, static_cast<off_t>(offset), origin) != 0) {
+        return E_FAIL;
+    }
+#endif
+    if (newPosition != nullptr) {
+#ifdef _WIN32
+        *newPosition = static_cast<UInt64>(_ftelli64(file_));
+#else
+        *newPosition = static_cast<UInt64>(ftello(file_));
+#endif
+    }
+    return S_OK;
+}
+
+FileInStream::~FileInStream() {
+    if (file_ != nullptr) std::fclose(file_);
+}
 
 // ---------------------------------------------------------------------------
 // OpenCallback — open + volume resolution + password supply
@@ -169,14 +173,11 @@ public:
                  const std::string &password)
         : input_path_(input_path), volumes_(volumes), password_(password) {}
 
+    ~OpenCallback();
+
     bool password_requested() const { return password_requested_; }
 
 private:
-    std::string input_path_;
-    std::vector<std::string> volumes_;
-    std::string password_;
-    bool password_requested_ = false;
-
     const std::string *FindVolume(const std::string &want_name) const {
         for (const std::string &volume : volumes_) {
             if (volume == want_name) return &volume;
@@ -185,53 +186,66 @@ private:
         return nullptr;
     }
 
-    Z7_COM7F_IMF(SetTotal(const UInt64 *, const UInt64 *)) { return S_OK; }
-    Z7_COM7F_IMF(SetCompleted(const UInt64 *, const UInt64 *)) { return S_OK; }
-
-    Z7_COM7F_IMF(GetStream(const wchar_t *name, IInStream **inStream)) {
-        *inStream = nullptr;
-        if (name == nullptr) return S_FALSE;
-        const std::string want =
-            UnicodeStringToMultiByte(UString(name), CP_UTF8).Ptr();
-        const std::string *volume = FindVolume(want);
-        if (volume == nullptr) return S_FALSE;
-        auto *raw = new FileInStream(*volume);
-        if (!raw->ok()) {
-            // Release through the interface pointer; the macro-generated
-            // override on the concrete class is private.
-            CMyComPtr<IInStream> dead(static_cast<IInStream *>(raw));
-            dead.Release();
-            return S_FALSE;
-        }
-        *inStream = static_cast<IInStream *>(raw);
-        return S_OK;
-    }
-
-    Z7_COM7F_IMF(GetProperty(PROPID propID, PROPVARIANT *value)) {
-        PropVariant_Clear(value);
-        if (propID == kpidName) {
-            // 7z derives sibling volume names from the archive name.
-            value->bstrVal = UStringToBstr(Utf8ToUString(input_path_));
-            if (value->bstrVal != nullptr) value->vt = VT_BSTR;
-        } else if (propID == kpidSize) {
-            value->vt = VT_UI8;
-            value->uhVal.QuadPart = 0;
-        }
-        return S_OK;
-    }
-
-    Z7_COM7F_IMF(CryptoGetTextPassword(BSTR *password)) {
-        *password = nullptr;
-        // The handler asking for a password proves the archive headers are
-        // encrypted (7z -mhe, rar5 with encrypted names); the engine uses
-        // this to separate "needs a password" from "not an archive".
-        password_requested_ = true;
-        if (password_.empty()) return E_FAIL;
-        *password = UStringToBstr(Utf8ToUString(password_));
-        if (*password == nullptr) return E_OUTOFMEMORY;
-        return S_OK;
-    }
+    std::string input_path_;
+    std::vector<std::string> volumes_;
+    std::string password_;
+    bool password_requested_ = false;
 };
+
+Z7_COM7F_IMF(OpenCallback::SetTotal(const UInt64 *, const UInt64 *)) {
+    return S_OK;
+}
+
+Z7_COM7F_IMF(OpenCallback::SetCompleted(const UInt64 *, const UInt64 *)) {
+    return S_OK;
+}
+
+Z7_COM7F_IMF(OpenCallback::GetStream(const wchar_t *name,
+                                     IInStream **inStream)) {
+    *inStream = nullptr;
+    if (name == nullptr) return S_FALSE;
+    const std::string want =
+        UnicodeStringToMultiByte(UString(name), CP_UTF8).Ptr();
+    const std::string *volume = FindVolume(want);
+    if (volume == nullptr) return S_FALSE;
+    auto *raw = new FileInStream(*volume);
+    if (!raw->ok()) {
+        // Release through the interface pointer; the macro-generated
+        // override on the concrete class is private.
+        CMyComPtr<IInStream> dead(static_cast<IInStream *>(raw));
+        dead.Release();
+        return S_FALSE;
+    }
+    *inStream = static_cast<IInStream *>(raw);
+    return S_OK;
+}
+
+Z7_COM7F_IMF(OpenCallback::GetProperty(PROPID propID, PROPVARIANT *value)) {
+    NWindows::NCOM::PropVariant_Clear(value);
+    if (propID == kpidName) {
+        // 7z derives sibling volume names from the archive name.
+        value->bstrVal = UStringToBstr(Utf8ToUString(input_path_));
+        if (value->bstrVal != nullptr) value->vt = VT_BSTR;
+    } else if (propID == kpidSize) {
+        value->vt = VT_UI8;
+        value->uhVal.QuadPart = 0;
+    }
+    return S_OK;
+}
+
+Z7_COM7F_IMF(OpenCallback::CryptoGetTextPassword(BSTR *password)) {
+    *password = nullptr;
+    // The handler asking for a password proves the archive headers are
+    // encrypted (7z -mhe, rar5 with encrypted names); the engine uses
+    // this to separate "needs a password" from "not an archive".
+    password_requested_ = true;
+    if (password_.empty()) return E_FAIL;
+    *password = UStringToBstr(Utf8ToUString(password_));
+    if (*password == nullptr) return E_OUTOFMEMORY;
+    return S_OK;
+}
+
+OpenCallback::~OpenCallback() = default;
 
 // ---------------------------------------------------------------------------
 // ExtractStream — ISequentialOutStream writing into a std::FILE
@@ -247,28 +261,33 @@ public:
           bomb_limit_(bomb_limit),
           bomb_tripped_(bomb_tripped) {}
 
+    ~ExtractStream();
+
 private:
     std::FILE *file_;
     uint64_t *total_written_;
     uint64_t bomb_limit_;
     bool *bomb_tripped_;
     uint64_t bytes_ = 0;
-
-    Z7_COM7F_IMF(Write(const void *data, UInt32 size, UInt32 *processedSize)) {
-        if (processedSize != nullptr) *processedSize = 0;
-        if (bomb_limit_ > 0 &&
-            *total_written_ + bytes_ + size > bomb_limit_) {
-            *bomb_tripped_ = true;
-            return E_FAIL;
-        }
-        if (size == 0) return S_OK;
-        if (file_ == nullptr) return E_FAIL;
-        if (std::fwrite(data, 1, size, file_) != size) return E_FAIL;
-        bytes_ += size;
-        if (processedSize != nullptr) *processedSize = size;
-        return S_OK;
-    }
 };
+
+Z7_COM7F_IMF(ExtractStream::Write(const void *data, UInt32 size,
+                                  UInt32 *processedSize)) {
+    if (processedSize != nullptr) *processedSize = 0;
+    if (bomb_limit_ > 0 &&
+        *total_written_ + bytes_ + size > bomb_limit_) {
+        *bomb_tripped_ = true;
+        return E_FAIL;
+    }
+    if (size == 0) return S_OK;
+    if (file_ == nullptr) return E_FAIL;
+    if (std::fwrite(data, 1, size, file_) != size) return E_FAIL;
+    bytes_ += size;
+    if (processedSize != nullptr) *processedSize = size;
+    return S_OK;
+}
+
+ExtractStream::~ExtractStream() = default;
 
 // ---------------------------------------------------------------------------
 // ExtractCallback — IArchiveExtractCallback + password supply
@@ -287,7 +306,7 @@ public:
           password_(password),
           bomb_limit_(bomb_limit) {}
 
-    ~ExtractCallback() { CloseFile(); }
+    ~ExtractCallback();
 
     bool wrong_password = false;
     bool data_error = false;
@@ -296,13 +315,6 @@ public:
     uint64_t files_written = 0;
 
 private:
-    IInArchive *archive_;
-    std::string out_dir_;
-    std::string password_;
-    uint64_t bomb_limit_;
-    std::FILE *out_file_ = nullptr;
-    CMyComPtr<ISequentialOutStream> out_stream_;
-
     void CloseFile() {
         if (out_file_ != nullptr) {
             std::fclose(out_file_);
@@ -311,79 +323,85 @@ private:
         out_stream_.Release();
     }
 
-    Z7_COM7F_IMF(SetTotal(UInt64)) { return S_OK; }
-    Z7_COM7F_IMF(SetCompleted(const UInt64 *)) { return S_OK; }
-
-    Z7_COM7F_IMF(GetStream(UInt32 index, ISequentialOutStream **outStream,
-                           Int32 askExtractMode)) {
-        *outStream = nullptr;
-        CloseFile();
-        // Only kExtract mode produces an output stream.
-        if (askExtractMode != NArchive::NExtract::NAskMode::kExtract) {
-            return S_OK;
-        }
-
-        NWindows::NCOM::CPropVariant path_prop;
-        if (archive_->GetProperty(index, kpidPath, &path_prop) != S_OK ||
-            path_prop.vt != VT_BSTR) {
-            return S_OK;
-        }
-        const std::string raw_path = BstrToUtf8(path_prop.bstrVal);
-        fs::path relative;
-        if (!SafePath(raw_path, relative)) return E_INVALIDARG;
-
-        NWindows::NCOM::CPropVariant dir_prop;
-        if (archive_->GetProperty(index, kpidIsDir, &dir_prop) == S_OK &&
-            dir_prop.vt == VT_BOOL && dir_prop.boolVal != VARIANT_FALSE) {
-            std::error_code ec;
-            fs::create_directories(Utf8ToPath(out_dir_) / relative, ec);
-            return S_OK;
-        }
-
-        std::error_code ec;
-        const fs::path target = Utf8ToPath(out_dir_) / relative;
-        fs::create_directories(target.parent_path(), ec);
-        out_file_ = std::fopen(PathToUtf8(target).c_str(), "wb");
-        if (out_file_ == nullptr) return E_FAIL;
-        auto *stream = new ExtractStream(out_file_, &total_written,
-                                         bomb_limit_, &bomb_tripped);
-        CMyComPtr<ISequentialOutStream> local(
-            static_cast<ISequentialOutStream *>(stream));
-        out_stream_ = local;
-        *outStream = local.Detach();
-        return S_OK;
-    }
-
-    Z7_COM7F_IMF(PrepareOperation(Int32)) { return S_OK; }
-
-    Z7_COM7F_IMF(SetOperationResult(Int32 operationResult)) {
-        CloseFile();
-        files_written += 1;
-        const int32_t result = operationResult;
-        if (result == NArchive::NExtract::NOperationResult::kOK) return S_OK;
-        if (result == NArchive::NExtract::NOperationResult::kWrongPassword) {
-            wrong_password = true;
-        } else {
-            // kDataError, kCrcError, kUnsupportedMethod, kUnexpectedEnd, ...
-            data_error = true;
-        }
-        return S_OK;
-    }
-
-    Z7_COM7F_IMF(CryptoGetTextPassword(BSTR *password)) {
-        *password = nullptr;
-        if (password_.empty()) return E_FAIL;
-        *password = UStringToBstr(Utf8ToUString(password_));
-        if (*password == nullptr) return E_OUTOFMEMORY;
-        return S_OK;
-    }
+    IInArchive *archive_;
+    std::string out_dir_;
+    std::string password_;
+    uint64_t bomb_limit_;
+    std::FILE *out_file_ = nullptr;
+    CMyComPtr<ISequentialOutStream> out_stream_;
 };
+
+Z7_COM7F_IMF(ExtractCallback::SetTotal(UInt64)) { return S_OK; }
+Z7_COM7F_IMF(ExtractCallback::SetCompleted(const UInt64 *)) { return S_OK; }
+
+Z7_COM7F_IMF(ExtractCallback::GetStream(UInt32 index,
+                                        ISequentialOutStream **outStream,
+                                        Int32 askExtractMode)) {
+    *outStream = nullptr;
+    CloseFile();
+    // Only kExtract mode produces an output stream.
+    if (askExtractMode != NArchive::NExtract::NAskMode::kExtract) {
+        return S_OK;
+    }
+
+    NWindows::NCOM::CPropVariant path_prop;
+    if (archive_->GetProperty(index, kpidPath, &path_prop) != S_OK ||
+        path_prop.vt != VT_BSTR) {
+        return S_OK;
+    }
+    const std::string raw_path = BstrToUtf8(path_prop.bstrVal);
+    fs::path relative;
+    if (!SafePath(raw_path, relative)) return E_INVALIDARG;
+
+    NWindows::NCOM::CPropVariant dir_prop;
+    if (archive_->GetProperty(index, kpidIsDir, &dir_prop) == S_OK &&
+        dir_prop.vt == VT_BOOL && dir_prop.boolVal != VARIANT_FALSE) {
+        std::error_code ec;
+        fs::create_directories(Utf8ToPath(out_dir_) / relative, ec);
+        return S_OK;
+    }
+
+    std::error_code ec;
+    const fs::path target = Utf8ToPath(out_dir_) / relative;
+    fs::create_directories(target.parent_path(), ec);
+    out_file_ = std::fopen(PathToUtf8(target).c_str(), "wb");
+    if (out_file_ == nullptr) return E_FAIL;
+    auto *stream = new ExtractStream(out_file_, &total_written,
+                                     bomb_limit_, &bomb_tripped);
+    CMyComPtr<ISequentialOutStream> local(
+        static_cast<ISequentialOutStream *>(stream));
+    out_stream_ = local;
+    *outStream = local.Detach();
+    return S_OK;
+}
+
+Z7_COM7F_IMF(ExtractCallback::PrepareOperation(Int32)) { return S_OK; }
+
+Z7_COM7F_IMF(ExtractCallback::SetOperationResult(Int32 operationResult)) {
+    CloseFile();
+    files_written += 1;
+    const int32_t result = operationResult;
+    if (result == NArchive::NExtract::NOperationResult::kOK) return S_OK;
+    if (result == NArchive::NExtract::NOperationResult::kWrongPassword) {
+        wrong_password = true;
+    } else {
+        // kDataError, kCrcError, kUnsupportedMethod, kUnexpectedEnd, ...
+        data_error = true;
+    }
+    return S_OK;
+}
+
+Z7_COM7F_IMF(ExtractCallback::CryptoGetTextPassword(BSTR *password)) {
+    *password = nullptr;
+    if (password_.empty()) return E_FAIL;
+    *password = UStringToBstr(Utf8ToUString(password_));
+    if (*password == nullptr) return E_OUTOFMEMORY;
+    return S_OK;
+}
+
+ExtractCallback::~ExtractCallback() { CloseFile(); }
 
 }  // namespace
-
-struct BackendGuid {
-    GUID value{};
-};
 
 struct ArchiveHandle {
     CMyComPtr<IInArchive> archive;
@@ -441,7 +459,7 @@ bool FindHandlerSig(const std::string &ext_want, const std::string &sig_want,
         }
         const BSTR bstr = cls_prop.bstrVal;
         if (SysStringByteLen(bstr) != sizeof(GUID)) continue;
-        std::memcpy(&out_clsid.value, bstr, sizeof(GUID));
+        std::memcpy(out_clsid.value.data(), bstr, sizeof(GUID));
         return true;
     }
     return false;
@@ -452,7 +470,8 @@ ArchiveHandle *OpenArchive(const std::string &path, const BackendGuid &clsid,
                            const std::string &password,
                            bool *password_requested) {
     CMyComPtr<IInArchive> archive;
-    if (CreateObject(&clsid.value, &IID_IInArchive,
+    const GUID *clsid_guid = reinterpret_cast<const GUID *>(&clsid.value);
+    if (CreateObject(clsid_guid, &IID_IInArchive,
                      reinterpret_cast<void **>(&archive)) != S_OK) {
         return nullptr;
     }

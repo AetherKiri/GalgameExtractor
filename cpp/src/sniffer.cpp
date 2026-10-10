@@ -24,7 +24,7 @@ constexpr Signature kSignatures[] = {
     {"Rar!\x1A\x07\x01\x00", 8, Format::rar5},
     {"Rar!\x1A\x07\x00", 7, Format::rar4},
     {"7z\xBC\xAF\x27\x1C", 6, Format::sevenz},
-    {"\xFD7zXZ\x00", 6, Format::xz},
+    {"\xFD\x37zXZ\x00", 6, Format::xz},
     {"PK\x03\x04", 4, Format::zip},
     {"MSCF", 4, Format::cab},
     {"BZh", 3, Format::bz2},
